@@ -160,11 +160,12 @@ start_notifications(Config) ->
         ip_version = IpVersion
     } = Config,
     {SslActivated, SslOptions} = default_ssl_options(Host, Ssl),
+    % Convert binaries to charlists for pgo_handler compatibility
     Options1 = #{
-        host => Host,
+        host => binary_to_list(Host),
         port => Port,
-        database => Database,
-        user => User,
+        database => binary_to_list(Database),
+        user => binary_to_list(User),
         ssl => SslActivated,
         ssl_options => SslOptions,
         connection_parameters => ConnectionParameters,
@@ -174,7 +175,7 @@ start_notifications(Config) ->
         end
     },
     Options2 = case Password of
-        {some, Pw} -> maps:put(password, Pw, Options1);
+        {some, Pw} -> maps:put(password, binary_to_list(Pw), Options1);
         none -> Options1
     end,
     pgo_notifications:start_link(Options2).
