@@ -7,6 +7,7 @@ import gleam/time/calendar
 import gleam/time/timestamp
 import gleeunit
 import pog
+import pog/notifications
 
 pub fn main() {
   gleeunit.main()
@@ -614,4 +615,45 @@ pub fn transaction_commit_test() {
   let assert True = id2 == got2
 
   disconnect(db)
+}
+
+pub fn notifications_selecting_test() {
+  // Start a notification listener
+  let config =
+    notifications.default_config()
+    |> notifications.database("gleam_pog_test")
+    |> notifications.password(Some("postgres"))
+
+  let assert Ok(listener) = notifications.start(config)
+
+  // Subscribe to a channel using the pog/notifications API
+  let assert Ok(notifications.Listening(subscription)) =
+    notifications.listen(listener.data, "test_channel")
+
+  // Set up selector using the notifications.selecting function
+  let selector =
+    process.new_selector()
+    |> notifications.selecting(subscription, fn(n) { n })
+
+  // Start a db connection to send NOTIFY
+  let db = start_default()
+
+  // Send a notification
+  let assert Ok(_) =
+    pog.query("NOTIFY test_channel, 'hello world'")
+    |> pog.execute(db.data)
+
+  // Try to receive the notification (100ms timeout)
+  let result: Result(notifications.Notification, Nil) =
+    process.selector_receive(selector, 100)
+
+  // Clean up
+  notifications.unlisten(subscription)
+  process.send_exit(listener.pid)
+  disconnect(db)
+
+  // Assert we received the notification
+  let assert Ok(notification) = result
+  assert notification.channel == "test_channel"
+  assert notification.payload == "hello world"
 }

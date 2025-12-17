@@ -194,8 +194,20 @@ unlisten(Pid, Ref) ->
 %% Add a notification handler to a selector.
 %% Messages are: {notification, ListenerPid, Ref, Channel, Payload}
 selecting_notification(Selector, ListenerPid, Ref, Mapper) ->
-    Handler = fun({notification, ListenerPid1, Ref1, Channel, Payload})
-                    when ListenerPid1 =:= ListenerPid, Ref1 =:= Ref ->
-                  Mapper({notification, Channel, Payload})
+    %% Gleam selectors match on `{element(1, Msg), tuple_size(Msg)}` only, so we
+    %% can't key the selector with ListenerPid/Ref. Instead we install a handler
+    %% for all notification messages and route by ListenerPid/Ref at runtime.
+    %%
+    %% We store per-subscription mappers in the *selecting process* dictionary,
+    %% so they are automatically cleaned up when the selecting process exits.
+    _ = erlang:put({pog_notification_selector, ListenerPid, Ref}, Mapper),
+    Handler = fun({notification, ListenerPid1, Ref1, Channel, Payload}) ->
+                  case erlang:get({pog_notification_selector, ListenerPid1, Ref1}) of
+                      undefined ->
+                          %% Fallback to the mapper from this registration.
+                          Mapper({notification, Channel, Payload});
+                      Mapper1 ->
+                          Mapper1({notification, Channel, Payload})
+                  end
               end,
-    gleam_erlang_ffi:insert_selector_handler(Selector, {notification, ListenerPid, Ref}, Handler).
+    gleam_erlang_ffi:insert_selector_handler(Selector, {notification, 5}, Handler).
