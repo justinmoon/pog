@@ -1,8 +1,10 @@
 -module(pog_ffi).
 
 -export([query/4, query_extended/2, start/1, coerce/1, null/0, checkout/1]).
+-export([start_notifications/1, listen/2, unlisten/2, selecting_notification/4]).
 
 -include_lib("pog/include/pog_Config.hrl").
+-include_lib("pog/include/pog@notifications_ListenerConfig.hrl").
 -include_lib("pg_types/include/pg_types.hrl").
 
 null() ->
@@ -141,3 +143,58 @@ convert_error(#{
     {unexpected_argument_type, Expected, Got};
 convert_error(closed) ->
     query_timeout.
+
+%%
+%% Notifications API
+%%
+
+start_notifications(Config) ->
+    #listener_config{
+        host = Host,
+        port = Port,
+        database = Database,
+        user = User,
+        password = Password,
+        ssl = Ssl,
+        connection_parameters = ConnectionParameters,
+        ip_version = IpVersion
+    } = Config,
+    {SslActivated, SslOptions} = default_ssl_options(Host, Ssl),
+    Options1 = #{
+        host => Host,
+        port => Port,
+        database => Database,
+        user => User,
+        ssl => SslActivated,
+        ssl_options => SslOptions,
+        connection_parameters => ConnectionParameters,
+        socket_options => case IpVersion of
+            ipv4 -> [];
+            ipv6 -> [inet6]
+        end
+    },
+    Options2 = case Password of
+        {some, Pw} -> maps:put(password, Pw, Options1);
+        none -> Options1
+    end,
+    pgo_notifications:start_link(Options2).
+
+listen(Pid, Channel) ->
+    case pgo_notifications:listen(Pid, Channel) of
+        {ok, Ref} -> {ok, {true, Ref}};
+        {eventually, Ref} -> {ok, {false, Ref}};
+        error -> {error, nil}
+    end.
+
+unlisten(Pid, Ref) ->
+    pgo_notifications:unlisten(Pid, Ref),
+    nil.
+
+%% Add a notification handler to a selector.
+%% Messages are: {notification, ListenerPid, Ref, Channel, Payload}
+selecting_notification(Selector, ListenerPid, Ref, Mapper) ->
+    Handler = fun({notification, ListenerPid1, Ref1, Channel, Payload})
+                    when ListenerPid1 =:= ListenerPid, Ref1 =:= Ref ->
+                  Mapper({notification, Channel, Payload})
+              end,
+    gleam_erlang_ffi:insert_selector_handler(Selector, {notification, ListenerPid, Ref}, Handler).
